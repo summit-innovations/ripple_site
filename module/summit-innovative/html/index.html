@@ -1,8 +1,221 @@
-<html>
-    <head>
-        <title>Welcome to summit-innovative.duckdns.org!</title>
-    </head>
-    <body>
-        <h1>Success!  The Summit-Innovative server block is working!</h1>
-    </body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ripple Glasses</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+      line-height: 1.5;
+      background-color: #f7f7f7;
+      color: #222;
+    }
+
+    h1 {
+      margin-bottom: 1rem;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-top: 1rem;
+      max-width: 480px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid #eee;
+      font-size: 0.95rem;
+    }
+
+    .row:last-child {
+      border-bottom: none;
+    }
+
+    .row .k {
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.75rem;
+    }
+
+    .row .v {
+      font-weight: 600;
+      text-align: right;
+    }
+
+    .reasoning-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.4rem;
+    }
+
+    .reasoning-row .v {
+      font-weight: 400;
+      text-align: left;
+      color: #222;
+    }
+
+    #envValue {
+      text-transform: capitalize;
+      background: #fff3cd;
+      color: #6d4c00;
+      padding: 0.1rem 0.5rem;
+      border-radius: 4px;
+    }
+
+    .error {
+      color: #a80000;
+      font-weight: 600;
+    }
+
+    .realtime-indicator {
+      display: inline-block;
+      margin: 0.5rem 0 1rem;
+      padding: 0.3rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid #bbb;
+      font-size: 0.9rem;
+      font-weight: 600;
+      background: #f0f0f0;
+    }
+
+    .realtime-connecting {
+      color: #6d4c00;
+      background: #fff3cd;
+      border-color: #f3d47a;
+    }
+
+    .realtime-connected {
+      color: #0f5132;
+      background: #d1e7dd;
+      border-color: #86d3b0;
+    }
+
+    .realtime-error {
+      color: #842029;
+      background: #f8d7da;
+      border-color: #e59aa3;
+    }
+
+    .realtime-disconnected {
+      color: #41464b;
+      background: #e2e3e5;
+      border-color: #c6c8ca;
+    }
+  </style>
+</head>
+<body>
+  <h1>Ripple Glasses</h1>
+  <div id="status">Connecting...</div>
+  <div id="realtime-status" class="realtime-indicator realtime-connecting">Realtime: Connecting...</div>
+
+  <div class="card">
+    <div class="row">
+      <span class="k">Environment</span>
+      <span class="v" id="envValue">—</span>
+    </div>
+    <div class="row">
+      <span class="k">Duration</span>
+      <span class="v" id="durationValue">—</span>
+    </div>
+    <div class="row reasoning-row">
+      <span class="k">Reasoning</span>
+      <span class="v" id="reasoningValue">—</span>
+    </div>
+    <div class="row">
+      <span class="k">Processed At</span>
+      <span class="v" id="processedAtValue">—</span>
+    </div>
+  </div>
+
+  <script>
+    // Path is proxied by nginx (see /realtime/ location block) through to the
+    // FastAPI websocket endpoint. Adjust if the route is mounted elsewhere.
+    const WS_PATH = "/realtime/ws/results";
+
+    const statusEl = document.getElementById("status");
+    const realtimeStatusEl = document.getElementById("realtime-status");
+    const envValue = document.getElementById("envValue");
+    const durationValue = document.getElementById("durationValue");
+    const reasoningValue = document.getElementById("reasoningValue");
+    const processedAtValue = document.getElementById("processedAtValue");
+
+    let socket = null;
+    let reconnectDelay = 1000;
+    const MAX_RECONNECT_DELAY = 15000;
+
+    function setRealtimeStatus(state, message) {
+      realtimeStatusEl.className = "realtime-indicator";
+      realtimeStatusEl.classList.add(`realtime-${state}`);
+      realtimeStatusEl.textContent = `Realtime: ${message}`;
+    }
+
+    function render(data) {
+      statusEl.textContent = "Live";
+      envValue.textContent = data.environment ?? "—";
+      durationValue.textContent =
+        data.duration_s !== undefined ? `${Number(data.duration_s).toFixed(2)} s` : "—";
+      reasoningValue.textContent = data.reasoning ?? "—";
+
+      if (data.processed_at) {
+        const parsed = new Date(data.processed_at);
+        processedAtValue.textContent = Number.isNaN(parsed.getTime())
+          ? data.processed_at
+          : parsed.toLocaleString();
+      } else {
+        processedAtValue.textContent = "—";
+      }
+    }
+
+    function connect() {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const url = `${protocol}//${location.host}${WS_PATH}`;
+
+      setRealtimeStatus("connecting", "Connecting...");
+      socket = new WebSocket(url);
+
+      socket.addEventListener("open", () => {
+        setRealtimeStatus("connected", "Connected");
+        reconnectDelay = 1000;
+      });
+
+      socket.addEventListener("message", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          render(data);
+        } catch (err) {
+          statusEl.innerHTML = `<span class="error">Failed to parse update: ${err.message}</span>`;
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        setRealtimeStatus("disconnected", "Disconnected — retrying...");
+        scheduleReconnect();
+      });
+
+      socket.addEventListener("error", () => {
+        setRealtimeStatus("error", "Connection error");
+        socket.close();
+      });
+    }
+
+    function scheduleReconnect() {
+      setTimeout(() => {
+        reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
+        connect();
+      }, reconnectDelay);
+    }
+
+    connect();
+  </script>
+</body>
 </html>
