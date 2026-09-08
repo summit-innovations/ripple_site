@@ -12,11 +12,9 @@
       background-color: #f7f7f7;
       color: #222;
     }
-
     h1 {
       margin-bottom: 1rem;
     }
-
     .card {
       background: #fff;
       border: 1px solid #ddd;
@@ -26,7 +24,6 @@
       max-width: 480px;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
     }
-
     .row {
       display: flex;
       justify-content: space-between;
@@ -35,35 +32,29 @@
       border-bottom: 1px solid #eee;
       font-size: 0.95rem;
     }
-
     .row:last-child {
       border-bottom: none;
     }
-
     .row .k {
       color: #666;
       text-transform: uppercase;
       letter-spacing: 0.04em;
       font-size: 0.75rem;
     }
-
     .row .v {
       font-weight: 600;
       text-align: right;
     }
-
     .reasoning-row {
       flex-direction: column;
       align-items: flex-start;
       gap: 0.4rem;
     }
-
     .reasoning-row .v {
       font-weight: 400;
       text-align: left;
       color: #222;
     }
-
     #envValue {
       text-transform: capitalize;
       background: #fff3cd;
@@ -71,12 +62,10 @@
       padding: 0.1rem 0.5rem;
       border-radius: 4px;
     }
-
     .error {
       color: #a80000;
       font-weight: 600;
     }
-
     .realtime-indicator {
       display: inline-block;
       margin: 0.5rem 0 1rem;
@@ -87,37 +76,48 @@
       font-weight: 600;
       background: #f0f0f0;
     }
-
     .realtime-connecting {
       color: #6d4c00;
       background: #fff3cd;
       border-color: #f3d47a;
     }
-
     .realtime-connected {
       color: #0f5132;
       background: #d1e7dd;
       border-color: #86d3b0;
     }
-
     .realtime-error {
       color: #842029;
       background: #f8d7da;
       border-color: #e59aa3;
     }
-
     .realtime-disconnected {
       color: #41464b;
       background: #e2e3e5;
       border-color: #c6c8ca;
     }
+    /* Dev-mode banner: intentionally loud and separate from the .realtime-*
+       indicator styles above, and from #envValue — that one shows the
+       *classifier's* detected environment label (e.g. "quiet room"), which
+       is an unrelated concept from prod/dev despite the shared word. */
+    .dev-banner {
+      margin-bottom: 1rem;
+      padding: 0.5rem 0.8rem;
+      border-radius: 6px;
+      background: #842029;
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
+  <div id="devBanner" class="dev-banner" hidden>Dev Mode — not production data</div>
   <h1>Ripple Glasses</h1>
   <div id="status">Connecting...</div>
   <div id="realtime-status" class="realtime-indicator realtime-connecting">Realtime: Connecting...</div>
-
   <div class="card">
     <div class="row">
       <span class="k">Environment</span>
@@ -136,36 +136,46 @@
       <span class="v" id="processedAtValue">—</span>
     </div>
   </div>
-
   <script>
-    // Path is proxied by nginx (see /realtime/ location block) through to the
-    // FastAPI websocket endpoint. Adjust if the route is mounted elsewhere.
-    const WS_PATH = "/realtime/ws/results";
-
+    // Dev vs prod is selected by a query param on THIS page's own URL
+    // (?env=dev), not by where the page is hosted — open this same page
+    // with ?env=dev appended when you want to watch your own dev-claim
+    // test session instead of production's live feed.
+    const params = new URLSearchParams(window.location.search);
+    const isDevMode = params.get("env") === "dev";
+ 
+    // Path is proxied by nginx (see /realtime/ and /dev/realtime/ location
+    // blocks) through to the FastAPI websocket endpoint. The "/dev" prefix
+    // here is the SAME prefix the device firmware uses to pick prod vs dev
+    // — mirroring it here is what keeps this dashboard pointed at whichever
+    // environment you're actually testing.
+    const WS_PATH = (isDevMode ? "/dev" : "") + "/realtime/ws/results";
+ 
+    if (isDevMode) {
+      document.getElementById("devBanner").hidden = false;
+      document.title = "Ripple Glasses (DEV)";
+    }
+ 
     const statusEl = document.getElementById("status");
     const realtimeStatusEl = document.getElementById("realtime-status");
     const envValue = document.getElementById("envValue");
     const durationValue = document.getElementById("durationValue");
     const reasoningValue = document.getElementById("reasoningValue");
     const processedAtValue = document.getElementById("processedAtValue");
-
     let socket = null;
     let reconnectDelay = 1000;
     const MAX_RECONNECT_DELAY = 15000;
-
     function setRealtimeStatus(state, message) {
       realtimeStatusEl.className = "realtime-indicator";
       realtimeStatusEl.classList.add(`realtime-${state}`);
       realtimeStatusEl.textContent = `Realtime: ${message}`;
     }
-
     function render(data) {
       statusEl.textContent = "Live";
       envValue.textContent = data.environment ?? "—";
       durationValue.textContent =
         data.duration_s !== undefined ? `${Number(data.duration_s).toFixed(2)} s` : "—";
       reasoningValue.textContent = data.reasoning ?? "—";
-
       if (data.processed_at) {
         const parsed = new Date(data.processed_at);
         processedAtValue.textContent = Number.isNaN(parsed.getTime())
@@ -175,19 +185,15 @@
         processedAtValue.textContent = "—";
       }
     }
-
     function connect() {
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${protocol}//${location.host}${WS_PATH}`;
-
       setRealtimeStatus("connecting", "Connecting...");
       socket = new WebSocket(url);
-
       socket.addEventListener("open", () => {
         setRealtimeStatus("connected", "Connected");
         reconnectDelay = 1000;
       });
-
       socket.addEventListener("message", (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -196,25 +202,21 @@
           statusEl.innerHTML = `<span class="error">Failed to parse update: ${err.message}</span>`;
         }
       });
-
       socket.addEventListener("close", () => {
         setRealtimeStatus("disconnected", "Disconnected — retrying...");
         scheduleReconnect();
       });
-
       socket.addEventListener("error", () => {
         setRealtimeStatus("error", "Connection error");
         socket.close();
       });
     }
-
     function scheduleReconnect() {
       setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT_DELAY);
         connect();
       }, reconnectDelay);
     }
-
     connect();
   </script>
 </body>
